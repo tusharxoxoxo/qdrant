@@ -53,9 +53,6 @@ impl Dispatcher {
         if let Some(state) = self.consensus_state.as_ref() {
             let start = Instant::now();
 
-            // List of operations to await for collection to be operational
-            let mut expect_operations: Vec<ConsensusOperations> = vec![];
-
             let op = match operation {
                 CollectionMetaOperations::CreateCollection(mut op) => {
                     self.toc.check_write_lock()?;
@@ -72,19 +69,6 @@ impl Dispatcher {
                                             .expect("Peer count should be always >= 1"),
                                     )
                                     .await;
-
-                                // Expect all replicas to become active eventually
-                                for (shard_id, peer_ids) in &shard_distribution.distribution {
-                                    for peer_id in peer_ids {
-                                        expect_operations.push(
-                                            ConsensusOperations::initialize_replica(
-                                                op.collection_name.clone(),
-                                                *shard_id,
-                                                *peer_id,
-                                            ),
-                                        );
-                                    }
-                                }
 
                                 op.set_distribution(shard_distribution);
                             }
@@ -104,16 +88,6 @@ impl Dispatcher {
 
                 op => op,
             };
-
-            let operation_awaiter =
-                // If explicit timeout is set - then we need to wait for all expected operations.
-                // E.g. in case of `CreateCollection` we will explicitly wait for all replicas to be activated.
-                // We need to register receivers(by calling the function) before submitting the operation.
-                if !expect_operations.is_empty() {
-                    Some(state.await_for_multiple_operations(expect_operations, wait_timeout))
-                } else {
-                    None
-                };
 
             let do_sync_nodes = match &op {
                 // Sync nodes after collection or shard key creation
@@ -144,16 +118,6 @@ impl Dispatcher {
                 )
                 .await?;
 
-            if let Some(operation_awaiter) = operation_awaiter {
-                // Actually await for expected operations to complete on the consensus
-                match operation_awaiter.await {
-                    Ok(Ok(())) => {} // all good
-                    Ok(Err(err)) => {
-                        log::warn!("Not all expected operations were completed: {}", err)
-                    }
-                    Err(err) => log::warn!("Awaiting for expected operations timed out: {}", err),
-                }
-            }
 
             // On some operations, synchronize all nodes to ensure all are ready for point operations
             if do_sync_nodes {
