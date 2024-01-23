@@ -118,7 +118,6 @@ impl Dispatcher {
                 )
                 .await?;
 
-
             // On some operations, synchronize all nodes to ensure all are ready for point operations
             if do_sync_nodes {
                 let remaining_timeout =
